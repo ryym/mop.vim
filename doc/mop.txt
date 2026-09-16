@@ -1,0 +1,53 @@
+*mop.txt*	Vim / Neovim integration for mop
+
+==============================================================================
+CONTENTS						*mop-contents*
+
+  1. Introduction	|mop-introduction|
+  2. Commands		|mop-commands|
+  3. Options		|mop-options|
+
+==============================================================================
+1. INTRODUCTION						*mop* *mop-introduction*
+
+mop.vim previews Markdown buffers in the browser with the `mop` CLI
+(https://github.com/ryym/mop) and keeps the preview in sync with the editor.
+
+Requires Neovim, or Vim with |+job| and |+timers|.
+
+==============================================================================
+2. COMMANDS						*mop-commands*
+
+:Mop							*:Mop*
+	Open a preview of the current Markdown buffer and start syncing.
+	The buffer must be written to a file first.
+	While syncing:
+	- Edits are sent with `mop update`, including unsaved text.
+	- The top line of the window is sent with `mop scroll`.
+	- Wiping out the buffer or quitting the editor runs `mop close`.
+	Running it again on a synced buffer re-opens the existing preview.
+
+:MopClose						*:MopClose*
+	Stop syncing the current buffer and close its preview.
+
+==============================================================================
+3. OPTIONS						*mop-options*
+
+*g:mop_command*
+	Command used to run the mop CLI.
+	Default: `'mop'`
+
+*g:mop_update_delay*
+	Debounce in milliseconds before sending an edit.
+	Default: `150`
+
+*g:mop_scroll_delay*
+	Debounce in milliseconds before sending a scroll.
+	Default: `60`
+
+*g:mop_viewport_ratio*
+	Where the top line of the window is placed in the preview viewport,
+	from 0.0 (top) to 1.0 (bottom). Raise it to leave context above.
+	Default: `0.0`
+
+ vim:tw=78:ts=8:noet:ft=help:norl:
