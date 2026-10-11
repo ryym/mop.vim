@@ -389,11 +389,7 @@ augroup END
 " Buffers are usually unloaded before this runs, so there is normally nothing
 " left here. It is the safety net for sessions that survived that.
 function! s:close_all() abort
-  for [l:bufnr, l:session] in items(s:sessions)
-    call s:stop_timer(l:session, 'update_timer')
-    call s:stop_timer(l:session, 'scroll_timer')
-    call s:wait(l:session.open_job, 2000)
-    call s:close_request(l:session.path)
+  for l:bufnr in keys(s:sessions)
+    call s:close(l:bufnr)
   endfor
-  let s:sessions = {}
 endfunction
