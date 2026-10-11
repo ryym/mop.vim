@@ -355,8 +355,8 @@ function! s:close(bufnr) abort
   call s:close_request(l:session.path)
 endfunction
 
-" close runs synchronously. BufUnload fires while the editor is quitting, and
-" a job started there is killed before it can even exec. It is a localhost
+" close runs synchronously. BufWipeout and VimLeavePre fire while the editor
+" is quitting, and a job started there is killed before it can even exec. It is a localhost
 " request, and `mop close` never starts a daemon, so it cannot stall.
 function! s:close_request(path) abort
   call system(join([shellescape(g:mop_command), 'close', shellescape(a:path)], ' '))
