@@ -12,17 +12,36 @@ function! s:error(msg) abort
   echohl None
 endfunction
 
+" The exit status `mop update`, `mop scroll` and `mop close` use when the
+" document has no preview: either no daemon is running, or the running one
+" does not know the document.
+let s:exit_no_preview = 3
+
 " s:run starts the CLI without blocking and returns a job handle, or v:null if
-" it could not be started. stdin is a list of lines, or an empty list when the
-" command takes no input.
-function! s:run(args, stdin) abort
+" it could not be started. The optional opts may have:
+"   stdin: list of lines to feed to the command (default: none)
+"   on_no_preview: called instead of reporting the error when the command
+"                  exits with s:exit_no_preview (default: none)
+function! s:run(args, ...) abort
+  let l:opts = a:0 > 0 ? a:1 : {}
   let l:cmd = [g:mop_command] + a:args
-  let l:text = empty(a:stdin) ? '' : join(a:stdin, "\n") . "\n"
+  let l:stdin = get(l:opts, 'stdin', [])
+  let l:text = empty(l:stdin) ? '' : join(l:stdin, "\n") . "\n"
+  " Collect the exit status and stderr here and handle the result only once
+  " both are in, because the callbacks delivering them run in no guaranteed
+  " order.
+  let l:state = {
+        \ 'stderr': [],
+        \ 'stderr_done': 0,
+        \ 'status': v:null,
+        \ 'on_no_preview': get(l:opts, 'on_no_preview', v:null),
+        \ }
 
   if has('nvim')
     let l:job = jobstart(l:cmd, {
           \ 'stderr_buffered': 1,
-          \ 'on_stderr': function('s:on_stderr_nvim'),
+          \ 'on_stderr': function('s:on_stderr_nvim', [l:state]),
+          \ 'on_exit': function('s:on_exit_nvim', [l:state]),
           \ })
     if l:job <= 0
       call s:error('failed to run ' . g:mop_command)
@@ -38,7 +57,9 @@ function! s:run(args, stdin) abort
   let l:job = job_start(l:cmd, {
         \ 'in_io': 'pipe',
         \ 'out_io': 'null',
-        \ 'err_cb': function('s:on_stderr_vim'),
+        \ 'err_cb': function('s:on_stderr_vim', [l:state]),
+        \ 'close_cb': function('s:on_close_vim', [l:state]),
+        \ 'exit_cb': function('s:on_exit_vim', [l:state]),
         \ })
   if job_status(l:job) ==# 'fail'
     call s:error('failed to run ' . g:mop_command)
@@ -78,16 +99,48 @@ function! s:wait(job, timeout) abort
   endwhile
 endfunction
 
-function! s:on_stderr_nvim(job, data, event) abort
-  let l:msg = substitute(join(a:data, "\n"), '\n\+$', '', '')
-  if !empty(l:msg)
-    call s:error(l:msg)
-  endif
+function! s:on_stderr_nvim(state, job, data, event) abort
+  let a:state.stderr = a:data
+  let a:state.stderr_done = 1
+  call s:finish(a:state)
 endfunction
 
-function! s:on_stderr_vim(ch, msg) abort
-  if !empty(a:msg)
-    call s:error(a:msg)
+function! s:on_exit_nvim(state, job, status, event) abort
+  let a:state.status = a:status
+  call s:finish(a:state)
+endfunction
+
+function! s:on_stderr_vim(state, ch, msg) abort
+  call add(a:state.stderr, a:msg)
+endfunction
+
+function! s:on_close_vim(state, ch) abort
+  " Mark stderr as complete here rather than in exit_cb, because Vim may call
+  " exit_cb before all of stderr has been read.
+  let a:state.stderr_done = 1
+  call s:finish(a:state)
+endfunction
+
+function! s:on_exit_vim(state, job, status) abort
+  let a:state.status = a:status
+  call s:finish(a:state)
+endfunction
+
+" s:finish handles how a command started by s:run ended, once both its exit
+" status and its stderr are known: it calls on_no_preview when the command
+" found no preview and that callback was given, and reports stderr as an error
+" otherwise.
+function! s:finish(state) abort
+  if !a:state.stderr_done || a:state.status is v:null
+    return
+  endif
+  if a:state.status ==# s:exit_no_preview && a:state.on_no_preview isnot v:null
+    call a:state.on_no_preview()
+    return
+  endif
+  let l:msg = substitute(join(a:state.stderr, "\n"), '\n\+$', '', '')
+  if !empty(l:msg)
+    call s:error(l:msg)
   endif
 endfunction
 
@@ -172,7 +225,10 @@ function! s:flush_update(bufnr) abort
   let l:lines = getbufline(a:bufnr, 1, '$')
   call s:run(['update', l:session.path,
         \ '--line', string(l:session.line),
-        \ '--viewport-ratio', printf('%.3f', l:session.ratio)], l:lines)
+        \ '--viewport-ratio', printf('%.3f', l:session.ratio)], {
+        \ 'stdin': l:lines,
+        \ 'on_no_preview': {-> s:on_no_preview(a:bufnr, l:session)},
+        \ })
 endfunction
 
 function! s:flush_scroll(bufnr) abort
@@ -188,7 +244,9 @@ function! s:flush_scroll(bufnr) abort
   endif
   call s:run(['scroll', l:session.path,
         \ '--line', string(l:session.line),
-        \ '--viewport-ratio', printf('%.3f', l:session.ratio)], [])
+        \ '--viewport-ratio', printf('%.3f', l:session.ratio)], {
+        \ 'on_no_preview': {-> s:on_no_preview(a:bufnr, l:session)},
+        \ })
 endfunction
 
 function! mop#open() abort
@@ -211,11 +269,11 @@ function! mop#open() abort
   if has_key(s:sessions, l:bufnr)
     " Already syncing: just re-open, which returns the existing URL without
     " adding a second tab.
-    call s:run(['open', l:path], [])
+    call s:run(['open', l:path])
     return
   endif
 
-  let l:job = s:run(['open', l:path], [])
+  let l:job = s:run(['open', l:path])
   if l:job is v:null
     return
   endif
@@ -255,17 +313,41 @@ function! mop#open() abort
   echo 'mop: syncing ' . fnamemodify(l:path, ':~:.')
 endfunction
 
-function! s:close(bufnr) abort
-  let l:session = get(s:sessions, a:bufnr, {})
-  if empty(l:session)
-    return
-  endif
+" s:stop_sync stops syncing the buffer without telling the daemon.
+function! s:stop_sync(bufnr) abort
+  let l:session = s:sessions[a:bufnr]
   call s:stop_timer(l:session, 'update_timer')
   call s:stop_timer(l:session, 'scroll_timer')
   unlet s:sessions[a:bufnr]
 
   execute 'autocmd! mop_buffer_' . a:bufnr
   execute 'augroup! mop_buffer_' . a:bufnr
+endfunction
+
+" s:on_no_preview stops syncing the buffer after a request of the given
+" session found its document has no preview, and tells the user the preview
+" has ended.
+function! s:on_no_preview(bufnr, session) abort
+  " Ignore the report unless it is about the current session, because several
+  " requests may fail the same way, and :Mop may have started a new session
+  " for the buffer since this one was sent.
+  if get(s:sessions, a:bufnr, {}) isnot a:session
+    return
+  endif
+  " End the session quietly instead of reporting an error on every edit,
+  " because a lost preview is one nobody is looking at: the daemon only exits
+  " after a long time with no browser connected. Skip `mop close` as the
+  " daemon has nothing left to close.
+  call s:stop_sync(a:bufnr)
+  echomsg 'mop: preview ended: ' . fnamemodify(a:session.path, ':~:.')
+endfunction
+
+function! s:close(bufnr) abort
+  let l:session = get(s:sessions, a:bufnr, {})
+  if empty(l:session)
+    return
+  endif
+  call s:stop_sync(a:bufnr)
 
   " Closing before the open request landed would leave the document
   " registered forever, so this one waits.

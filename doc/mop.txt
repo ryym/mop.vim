@@ -25,6 +25,9 @@ Requires Neovim, or Vim with |+job| and |+timers|.
 	- Edits are sent with `mop update`, including unsaved text.
 	- The top line of the window is sent with `mop scroll`.
 	- Wiping out the buffer or quitting the editor runs `mop close`.
+	Syncing ends by itself, with a message, when the preview is gone:
+	the mop daemon exits after a while with no browser connected.
+	Run |:Mop| again to reopen it.
 	Running it again on a synced buffer re-opens the existing preview.
 
 :MopClose						*:MopClose*
