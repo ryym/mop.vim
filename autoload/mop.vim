@@ -307,7 +307,7 @@ function! mop#open() abort
     " it would drop the session on every reload. BufWipeout only fires when
     " the buffer is actually gone.
     execute 'autocmd BufWipeout <buffer=' . l:bufnr
-          \ . '> call s:close(' . l:bufnr . ')'
+          \ . '> call s:close_preview(' . l:bufnr . ')'
   augroup END
 
   echo 'mop: syncing ' . fnamemodify(l:path, ':~:.')
@@ -342,7 +342,7 @@ function! s:on_no_preview(bufnr, session) abort
   echomsg 'mop: preview ended: ' . fnamemodify(a:session.path, ':~:.')
 endfunction
 
-function! s:close(bufnr) abort
+function! s:close_preview(bufnr) abort
   let l:session = get(s:sessions, a:bufnr, {})
   if empty(l:session)
     return
@@ -368,7 +368,7 @@ function! mop#close_current() abort
     call s:error('this buffer is not being previewed')
     return
   endif
-  call s:close(l:bufnr)
+  call s:close_preview(l:bufnr)
   echo 'mop: stopped'
 endfunction
 
@@ -377,7 +377,7 @@ endfunction
 augroup mop_global
   autocmd!
   " Leaving the editor should not leave documents registered in the daemon.
-  autocmd VimLeavePre * call s:close_all()
+  autocmd VimLeavePre * call s:close_all_previews()
   " WinScrolled's pattern matches the window, not the buffer, so it cannot be
   " registered per buffer. It is harmless while nothing is being previewed:
   " s:on_scroll returns immediately when the buffer has no session.
@@ -388,8 +388,8 @@ augroup END
 
 " Buffers are usually unloaded before this runs, so there is normally nothing
 " left here. It is the safety net for sessions that survived that.
-function! s:close_all() abort
+function! s:close_all_previews() abort
   for l:bufnr in keys(s:sessions)
-    call s:close(l:bufnr)
+    call s:close_preview(l:bufnr)
   endfor
 endfunction
